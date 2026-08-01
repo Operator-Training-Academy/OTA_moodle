@@ -17,7 +17,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # OCI/Docker repository names must be lowercase; GitHub preserves name casing.
+  IMAGE_NAME: operator-training-academy/ota_moodle
 
 jobs:
   build:
