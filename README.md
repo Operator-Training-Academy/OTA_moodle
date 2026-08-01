@@ -6,7 +6,7 @@ This repository publishes a hardened PHP/Apache Moodle base image to GitHub Cont
 
 | Component | Choice |
 |---|---|
-| Application base | GHCR image: PHP 8.3, Apache, extensions, Composer, Moodle source seed |
+| Application base | GHCR image: PHP 8.4, Apache, extensions, Composer, Moodle source seed |
 | Database | External PostgreSQL on an external Docker network |
 | Cache | Valkey sidecar on an internal Docker network |
 | Cron | Ofelia sidecar, executing Moodle cron every minute |
@@ -14,12 +14,20 @@ This repository publishes a hardened PHP/Apache Moodle base image to GitHub Cont
 
 `systemctl` is deliberately not provided. Running systemd in a container requires privileged access and weakens the container boundary. Ofelia is the dedicated scheduler.
 
+The in-container layout follows Moodle 5.2's public-directory model:
+
+```text
+/var/www/moodle         Moodle source and config.php
+/var/www/moodle/public  Apache document root
+/moodledata             Moodle writable data
+```
+
 ## Publishing
 
 GitHub Actions publishes `linux/amd64` and `linux/arm64` images to:
 
 ```text
-ghcr.io/prevail90/ota_moodle
+ghcr.io/operator-training-academy/ota_moodle
 ```
 
 Pushes to `main` publish `latest` and a commit-SHA tag. Git tags such as `v5.2.1` publish versioned tags. The workflow also creates provenance and SBOM attestations.
@@ -46,7 +54,7 @@ sudo chown -R 33:33 ./moodle ./moodledata
 Create `.env` with at least these values:
 
 ```dotenv
-MOODLE_TAG=latest
+OTA_IMAGE_TAG=latest
 WWWROOT=https://moodle.example.com
 DB_HOST=postgres
 DB_PORT=5432
@@ -75,6 +83,18 @@ docker compose logs -f moodle
 
 Point Nginx Proxy Manager at `moodle_app:80` on the shared proxy network. No host port is published by default.
 
+### Existing Deployment Migration
+
+If upgrading an existing deployment that used `/var/moodledata`, stop the stack and update the persisted Moodle `config.php` before starting this version:
+
+```bash
+docker compose down
+sed -i "s|/var/moodledata|/moodledata|g" ./moodle/config.php
+docker compose up -d
+```
+
+The host directories themselves do not move: `./moodle` is now mounted at `/var/www/moodle`, and `./moodledata` is now mounted at `/moodledata`. Adjust the command if `MOODLE_CODE_PATH` uses a different host directory.
+
 ## Update Moodle
 
 The image tag controls the PHP/Apache base. It does not select Moodle's running version. To update Moodle, first back up PostgreSQL and both persistent directories, then run:
@@ -98,7 +118,7 @@ List the available menu entries without updating:
 ./scripts/update-moodle.sh --list
 ```
 
-The updater does not pull or rebuild the GHCR image. To update the base image after it is published, set `MOODLE_TAG` to the desired infrastructure image version and run `docker compose pull && docker compose up -d`.
+The updater does not pull or rebuild the GHCR image. To update the base image after it is published, set `OTA_IMAGE_TAG` to the desired infrastructure image version and run `docker compose pull && docker compose up -d`.
 
 Rolling back Moodle code after a completed schema upgrade is not generally safe; restore the matching PostgreSQL and persistent-directory backups instead.
 

@@ -15,7 +15,7 @@
 
 services:
   moodle:
-    image: ${MOODLE_IMAGE:-ghcr.io/prevail90/ota_moodle}:${MOODLE_TAG:-latest}
+    image: ${OTA_IMAGE:-ghcr.io/operator-training-academy/ota_moodle}:${OTA_IMAGE_TAG:-latest}
     container_name: moodle_app
     restart: unless-stopped
     env_file: ${ENV_FILE:-.env}
@@ -45,8 +45,8 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       # The first start populates an empty code path from the image seed.
-      - ${MOODLE_CODE_PATH:-./moodle}:/var/www/html
-      - ${MOODLEDATA_PATH:-./moodledata}:/var/moodledata
+      - ${MOODLE_CODE_PATH:-./moodle}:/var/www/moodle
+      - ${MOODLEDATA_PATH:-./moodledata}:/moodledata
     # No host ports when behind Nginx Proxy Manager.
     # Uncomment only for direct debugging:
     # ports:

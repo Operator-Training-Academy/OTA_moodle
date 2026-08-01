@@ -2,12 +2,12 @@
 # Hardened Moodle container.
 # Moodle source and Composer dependencies seed the persistent code mount.
 
-ARG PHP_VERSION=8.3
+ARG PHP_VERSION=8.4
 FROM php:${PHP_VERSION}-apache-bookworm
 
 ARG MOODLE_REF=MOODLE_502_STABLE
 ARG MOODLE_REPOSITORY=https://github.com/moodle/moodle.git
-ARG IMAGE_SOURCE=https://github.com/prevail90/OTA_moodle
+ARG IMAGE_SOURCE=https://github.com/Operator-Training-Academy/OTA_moodle
 ARG IMAGE_REVISION
 
 LABEL org.opencontainers.image.title="Hardened Moodle"
@@ -16,8 +16,8 @@ LABEL org.opencontainers.image.source="${IMAGE_SOURCE}"
 LABEL org.opencontainers.image.revision="${IMAGE_REVISION}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    APACHE_DOCUMENT_ROOT=/var/www/html \
-    MOODLE_DATA=/var/moodledata \
+    APACHE_DOCUMENT_ROOT=/var/www/moodle/public \
+    MOODLE_DATA=/moodledata \
     PHP_MEMORY_LIMIT=256M \
     PHP_MAX_EXECUTION_TIME=300 \
     PHP_UPLOAD_MAX_FILESIZE=128M \
@@ -91,8 +91,8 @@ RUN git clone --depth 1 --branch "${MOODLE_REF}" "${MOODLE_REPOSITORY}" ${MOODLE
     && git config --global --add safe.directory ${MOODLE_SEED_DIR} \
     && COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress \
     && rm -rf ${MOODLE_SEED_DIR}/.git \
-    && mkdir -p /var/www/html ${MOODLE_DATA} \
-    && chown -R www-data:www-data ${MOODLE_SEED_DIR} /var/www/html ${MOODLE_DATA} \
+    && mkdir -p /var/www/moodle/public ${MOODLE_DATA} \
+    && chown -R www-data:www-data ${MOODLE_SEED_DIR} /var/www/moodle ${MOODLE_DATA} \
     && chmod 770 ${MOODLE_DATA}
 
 # ---------------------------------------------------------------------------

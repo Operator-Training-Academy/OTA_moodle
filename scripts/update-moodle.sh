@@ -75,7 +75,7 @@ set -euo pipefail
 
 remote="$1"
 target="$2"
-code_dir=/var/www/html
+code_dir=/var/www/moodle
 preserve_dir="$(mktemp -d)"
 trap 'rm -rf "${preserve_dir}"' EXIT
 

@@ -1,9 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-MOODLE_DIR=/var/www/html
+MOODLE_DIR=/var/www/moodle
 SEED_DIR=${MOODLE_SEED_DIR:-/usr/src/moodle}
-DATA_DIR=${MOODLE_DATA:-/var/moodledata}
+DATA_DIR=${MOODLE_DATA:-/moodledata}
 CONFIG_FILE="${MOODLE_DIR}/config.php"
 
 echo "==> Hardened Moodle entrypoint"
@@ -96,6 +96,11 @@ EOF
     chmod 440 "${CONFIG_FILE}"
     echo "==> config.php created on host mount"
 else
+    if grep -q '/var/moodledata' "${CONFIG_FILE}"; then
+        echo "ERROR: Existing config.php still uses /var/moodledata." >&2
+        echo "       Change its dataroot to /moodledata before starting this container." >&2
+        exit 1
+    fi
     echo "==> config.php already present — skipping generation"
 fi
 
