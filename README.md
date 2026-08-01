@@ -1,160 +1,126 @@
-# Hardened Moodle Container Stack
+# Hardened Moodle Container
 
-A highly secure, future-proof Moodle LMS deployment that is:
-
-- **Host-mounted code & data** — Moodle source and `moodledata` live in local directories on the host (not only inside the container).
-- **External networks** — joins your existing **Nginx Proxy Manager** network and **PostgreSQL** network.
-- **Updateable via GitHub + CLI** — first boot clones Moodle into the host path; later updates via git on the host or `./scripts/update-moodle.sh`.
-- **Hardened** — non-root user, capability dropping, Redis sessions, no published ports by default.
-- **Production-ready** — Valkey + Ofelia cron + automatic install.
-
-> **Note on `systemctl`:** Full systemd inside a container requires privileged mode and weakens security. Cron is provided by the **Ofelia** sidecar.
-
-| Component | Choice |
-|-----------|--------|
-| Web server | **Apache** (PHP 8.3 Bookworm) |
-| Database | **External PostgreSQL** (your container) |
-| Proxy | **External Nginx Proxy Manager** |
-| Cron | **Ofelia** |
-| Cache | Valkey (internal) |
-
----
-
-## Prerequisites
-
-```bash
-# External networks (names must match .env)
-docker network create nginx-proxy-manager   # or your NPM network name
-docker network create postgres-net          # or your Postgres network name
-
-# Host directories for code + data (UID 1000 = moodle user in container)
-mkdir -p ./moodle ./moodledata
-sudo chown -R 1000:1000 ./moodle ./moodledata
-```
-
-Your PostgreSQL container must already be on `DB_NETWORK` and reachable as `DB_HOST`.
-
----
-
-## Quick Start
-
-```bash
-git clone https://github.com/YOUR_ORG/moodle-hardened.git
-cd moodle-hardened
-
-cp .env.example .env
-nano .env
-# Set at least:
-#   WWWROOT, ADMIN_PASS, DB_HOST, DB_PASSWORD
-#   PROXY_NETWORK, DB_NETWORK
-#   MOODLE_CODE_PATH, MOODLEDATA_PATH (defaults: ./moodle, ./moodledata)
-
-docker compose up -d --build
-docker compose logs -f moodle
-```
-
-On first start, if `./moodle` is empty, the entrypoint clones `MOODLE_BRANCH` from GitHub into that host directory, writes `config.php`, and runs the CLI installer.
-
-Point Nginx Proxy Manager at container `moodle_app` port `80` on the shared proxy network.
-
----
+This repository publishes a hardened PHP/Apache Moodle base image to GitHub Container Registry (GHCR). The image contains a Composer-built Moodle source seed for first start. Moodle code and its `vendor/` directory then persist on the host and are updated interactively from Moodle's GitHub repository.
 
 ## Architecture
 
+| Component | Choice |
+|---|---|
+| Application base | GHCR image: PHP 8.3, Apache, extensions, Composer, Moodle source seed |
+| Database | External PostgreSQL on an external Docker network |
+| Cache | Valkey sidecar on an internal Docker network |
+| Cron | Ofelia sidecar, executing Moodle cron every minute |
+| Persistent files | Host-mounted Moodle code (including `vendor/`) and `moodledata` |
+
+`systemctl` is deliberately not provided. Running systemd in a container requires privileged access and weakens the container boundary. Ofelia is the dedicated scheduler.
+
+## Publishing
+
+GitHub Actions publishes `linux/amd64` and `linux/arm64` images to:
+
+```text
+ghcr.io/prevail90/ota_moodle
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Host                                                       │
-│   ./moodle      ──bind──► /var/www/html  (moodle_app)       │
-│   ./moodledata  ──bind──► /var/moodledata                   │
-└─────────────────────────────────────────────────────────────┘
 
-Networks:
-  PROXY_NETWORK (external)  ← moodle_app  ↔  Nginx Proxy Manager
-  DB_NETWORK    (external)  ← moodle_app  ↔  PostgreSQL
-  moodle_internal           ← moodle_app, moodle_cache, moodle_ofelia
-```
+Pushes to `main` publish `latest` and a commit-SHA tag. Git tags such as `v5.2.1` publish versioned tags. The workflow also creates provenance and SBOM attestations.
 
-| Service   | Image                         | Networks              | Role                |
-|-----------|-------------------------------|-----------------------|---------------------|
-| `moodle`  | custom PHP 8.3 + Apache       | proxy, database, internal | App                 |
-| `cache`   | valkey:8-alpine               | internal              | Sessions / cache    |
-| `ofelia`  | mcuadros/ofelia               | internal              | Cron                |
-
-No internal Postgres service and no published host ports by default.
-
----
-
-## Environment highlights
-
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `MOODLE_CODE_PATH` | Host path for Moodle code | `./moodle` |
-| `MOODLEDATA_PATH` | Host path for moodledata | `./moodledata` |
-| `PROXY_NETWORK` | External NPM network name | `nginx-proxy-manager` |
-| `DB_NETWORK` | External Postgres network name | `postgres-net` |
-| `DB_HOST` | Postgres service/container name on that network | `postgres` |
-| `WWWROOT` | Public HTTPS URL | `https://moodle.example.com` |
-| `REVERSE_PROXY` / `SSL_PROXY` | Behind NPM | `true` |
-
----
-
-## Updating Moodle code (on the host)
-
-Because code lives on the host:
+The first GHCR publish may create a private package. Make it public in the package settings if anonymous image pulls are required. For a private package, authenticate on each deployment host:
 
 ```bash
-cd ./moodle
-git fetch --tags
-git checkout MOODLE_502_STABLE   # or a tag
-# or: git pull
+echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
 
+The workflow's manual trigger accepts a Moodle branch or tag for the source seed. Rebuild and publish the image when its OS, PHP, Apache, PHP extensions, or hardening configuration needs an update. Routine Moodle upgrades use the interactive CLI updater below.
+
+## Deploy
+
+Create the external networks once, using the values configured in `.env`:
+
+```bash
+docker network create nginx-proxy-manager
+docker network create postgres-net
+mkdir -p ./moodle ./moodledata
+sudo chown -R 33:33 ./moodle ./moodledata
+```
+
+Create `.env` with at least these values:
+
+```dotenv
+MOODLE_TAG=latest
+WWWROOT=https://moodle.example.com
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=moodle
+DB_USER=moodle
+DB_PASSWORD=replace-with-a-database-secret
+ADMIN_PASS=replace-with-a-strong-admin-password
+MOODLE_PASSWORD_SALT_MAIN=replace-with-a-persistent-random-secret
+PROXY_NETWORK=nginx-proxy-manager
+DB_NETWORK=postgres-net
+```
+
+Generate `MOODLE_PASSWORD_SALT_MAIN` once, retain it securely, and use the same value on every replacement container:
+
+```bash
+openssl rand -hex 32
+```
+
+Start the stack:
+
+```bash
+docker compose pull
+docker compose up -d
+docker compose logs -f moodle
+```
+
+Point Nginx Proxy Manager at `moodle_app:80` on the shared proxy network. No host port is published by default.
+
+## Update Moodle
+
+The image tag controls the PHP/Apache base. It does not select Moodle's running version. To update Moodle, first back up PostgreSQL and both persistent directories, then run:
+
+```bash
+./scripts/update-moodle.sh
+```
+
+The menu lists stable branches and recent release tags directly from `moodle/moodle`. The selected ref is checked out to `MOODLE_CODE_PATH`; the script runs `composer install --no-dev --optimize-autoloader`, restarts Moodle, runs the database upgrade, and purges caches.
+
+To select a known ref without the menu:
+
+```bash
+./scripts/update-moodle.sh MOODLE_502_STABLE
+./scripts/update-moodle.sh v5.2.1
+```
+
+List the available menu entries without updating:
+
+```bash
+./scripts/update-moodle.sh --list
+```
+
+The updater does not pull or rebuild the GHCR image. To update the base image after it is published, set `MOODLE_TAG` to the desired infrastructure image version and run `docker compose pull && docker compose up -d`.
+
+Rolling back Moodle code after a completed schema upgrade is not generally safe; restore the matching PostgreSQL and persistent-directory backups instead.
+
+## Security Properties
+
+- The root filesystem is read-only; only the Moodle code and `moodledata` bind mounts are writable.
+- The first start seeds the code mount with Moodle and its production Composer dependencies.
+- Interactive updates install Composer dependencies from the selected Moodle ref's lock file.
+- `moodledata` is outside the web root.
+- Apache blocks dependency, VCS, test, and metadata paths from HTTP access.
+- The application drops all Linux capabilities except those needed by Apache and data ownership, and uses `no-new-privileges`.
+- Valkey is internal-only. PostgreSQL and the reverse proxy are attached through explicit external networks.
+
+## Useful Commands
+
+```bash
+docker compose exec moodle php admin/cli/cron.php
 docker compose exec moodle php admin/cli/upgrade.php --non-interactive
 docker compose exec moodle php admin/cli/purge_caches.php
-```
-
-Or use `./scripts/update-moodle.sh` after adjusting it for host-mounted trees.
-
----
-
-## Cron (Ofelia)
-
-```ini
-[job-exec "moodle-cron"]
-schedule = @every 1m
-container = moodle_app
-command = php /var/www/html/admin/cli/cron.php
-user = moodle
-no-overlap = true
-```
-
----
-
-## Security notes
-
-- `cap_drop: ALL` + minimal capabilities
-- `no-new-privileges:true`
-- No host port binding when behind NPM
-- `moodledata` outside the web root (separate bind mount)
-- `config.php` mode `440` on first generate
-- Block `vendor/`, `node_modules/`, `.git/`, etc. via Apache rules or NPM (see security-check paths)
-
----
-
-## Useful commands
-
-```bash
 docker compose logs -f moodle ofelia
-docker compose exec moodle bash
-docker compose exec moodle php admin/cli/cron.php
-
-# Confirm networks
-docker network inspect nginx-proxy-manager
-docker network inspect postgres-net
 ```
-
----
 
 ## License
 
-This repository (Dockerfiles, scripts, configuration) is MIT.  
-Moodle remains GPLv3+.
+This repository is MIT. Moodle is GPLv3+.

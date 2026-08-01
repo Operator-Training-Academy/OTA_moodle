@@ -1,14 +1,19 @@
 # syntax=docker/dockerfile:1.7
-# Hardened Moodle container — future-proof, CLI-updatable via GitHub
-# Default: Moodle 5.2 (MOODLE_502_STABLE) on PHP 8.3 Apache (Bookworm)
+# Hardened Moodle container.
+# Moodle source and Composer dependencies seed the persistent code mount.
 
 ARG PHP_VERSION=8.3
 FROM php:${PHP_VERSION}-apache-bookworm
 
+ARG MOODLE_REF=MOODLE_502_STABLE
+ARG MOODLE_REPOSITORY=https://github.com/moodle/moodle.git
+ARG IMAGE_SOURCE=https://github.com/prevail90/OTA_moodle
+ARG IMAGE_REVISION
+
 LABEL org.opencontainers.image.title="Hardened Moodle"
-LABEL org.opencontainers.image.description="Secure, updateable Moodle LMS container with essential tools"
-LABEL org.opencontainers.image.source="https://github.com/YOUR_ORG/moodle-hardened"
-LABEL maintainer="you@example.com"
+LABEL org.opencontainers.image.description="Secure Moodle LMS container with a Composer-built source seed"
+LABEL org.opencontainers.image.source="${IMAGE_SOURCE}"
+LABEL org.opencontainers.image.revision="${IMAGE_REVISION}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     APACHE_DOCUMENT_ROOT=/var/www/html \
@@ -20,7 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PHP_MAX_INPUT_VARS=5000
 
 # ---------------------------------------------------------------------------
-# 1. System packages + tools (nano, git, curl, etc.)
+# 1. System packages + tools (nano, git, curl, Composer, etc.)
 #    Cron is handled by Ofelia sidecar — not installed in this image.
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -42,6 +47,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8
+
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
 # ---------------------------------------------------------------------------
 # 2. PHP extensions required by Moodle
@@ -74,15 +81,18 @@ RUN a2enmod rewrite headers expires remoteip \
 RUN mkdir -p /var/www && chown www-data:www-data /var/www
 
 # ---------------------------------------------------------------------------
-# 5. Workdirs (Moodle code + data are bind-mounted from the host)
-#    First-start bootstrap clones Moodle into the host path via entrypoint.
+# 5. Moodle source seed and production Composer dependencies
 # ---------------------------------------------------------------------------
-ARG MOODLE_BRANCH=MOODLE_502_STABLE
-ENV MOODLE_BRANCH=${MOODLE_BRANCH}
+ENV MOODLE_SEED_DIR=/usr/src/moodle
 
-WORKDIR /var/www/html
-RUN mkdir -p ${MOODLE_DATA} \
-    && chown www-data:www-data /var/www/html ${MOODLE_DATA} \
+WORKDIR ${MOODLE_SEED_DIR}
+RUN git clone --depth 1 --branch "${MOODLE_REF}" "${MOODLE_REPOSITORY}" ${MOODLE_SEED_DIR} \
+    && cd ${MOODLE_SEED_DIR} \
+    && git config --global --add safe.directory ${MOODLE_SEED_DIR} \
+    && COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress \
+    && rm -rf ${MOODLE_SEED_DIR}/.git \
+    && mkdir -p /var/www/html ${MOODLE_DATA} \
+    && chown -R www-data:www-data ${MOODLE_SEED_DIR} /var/www/html ${MOODLE_DATA} \
     && chmod 770 ${MOODLE_DATA}
 
 # ---------------------------------------------------------------------------

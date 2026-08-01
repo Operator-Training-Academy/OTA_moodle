@@ -1,29 +1,24 @@
 # Hardened Moodle stack
-# - Moodle code + moodledata on HOST directories (bind mounts)
+# - Moodle code and moodledata are persisted on the host
+# - GHCR supplies PHP, Apache, Moodle's first-start source seed, and tools
 # - PostgreSQL and Nginx Proxy Manager on EXTERNAL Docker networks
 # - Valkey + Ofelia on an internal network
 #
 # Prerequisites (once on the host):
 #   docker network create nginx-proxy-manager   # or whatever NPM uses
 #   docker network create postgres-net          # or whatever Postgres uses
-#   mkdir -p ./moodle ./moodledata && chown -R 1000:1000 ./moodle ./moodledata
+#   mkdir -p ./moodle ./moodledata && chown -R 33:33 ./moodle ./moodledata
 #
 # Usage:
 #   cp .env.example .env && nano .env
-#   docker compose up -d --build
+#   docker compose pull && docker compose up -d
 
 services:
   moodle:
-    build:
-      context: .
-      args:
-        PHP_VERSION: "8.3"
-        # Branch used only when host moodle dir is empty (first bootstrap)
-        MOODLE_BRANCH: "${MOODLE_BRANCH:-MOODLE_502_STABLE}"
-    image: moodle-hardened:latest
+    image: ${MOODLE_IMAGE:-ghcr.io/prevail90/ota_moodle}:${MOODLE_TAG:-latest}
     container_name: moodle_app
     restart: unless-stopped
-    env_file: .env
+    env_file: ${ENV_FILE:-.env}
     environment:
       # Database (external PostgreSQL)
       DB_TYPE: pgsql
@@ -48,9 +43,8 @@ services:
       REVERSE_PROXY: ${REVERSE_PROXY:-true}
       SSL_PROXY: ${SSL_PROXY:-true}
       TZ: ${TZ:-UTC}
-      MOODLE_BRANCH: ${MOODLE_BRANCH:-MOODLE_502_STABLE}
     volumes:
-      # Host directories — Moodle code and data live on the host, not in named volumes
+      # The first start populates an empty code path from the image seed.
       - ${MOODLE_CODE_PATH:-./moodle}:/var/www/html
       - ${MOODLEDATA_PATH:-./moodledata}:/var/moodledata
     # No host ports when behind Nginx Proxy Manager.
@@ -74,7 +68,8 @@ services:
       - SETUID
       - DAC_OVERRIDE
       - NET_BIND_SERVICE
-    read_only: false
+    # The root filesystem is read-only; the two application bind mounts are writable.
+    read_only: true
     tmpfs:
       - /tmp:mode=1777,size=256m
       - /var/run:mode=0755,size=64m
@@ -123,7 +118,7 @@ services:
     cap_drop:
       - ALL
 
-# No named volumes for code/data — they live on the host.
+# No named volumes. moodledata is a host bind mount for backup and portability.
 # No internal Postgres — use your external database network.
 
 networks:
