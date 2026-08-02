@@ -105,6 +105,8 @@ RUN a2enconf moodle
 COPY --chown=root:root scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
 
+WORKDIR /var/www/moodle
+
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -f http://localhost/ || exit 1

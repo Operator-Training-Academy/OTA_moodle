@@ -51,6 +51,14 @@ mkdir -p ./moodle ./moodledata
 sudo chown -R 33:33 ./moodle ./moodledata
 ```
 
+Valkey recommends enabling memory overcommit on the Docker host:
+
+```bash
+sudo sysctl -w vm.overcommit_memory=1
+```
+
+Persist this setting using your host operating system's sysctl configuration.
+
 Create `.env` with at least these values:
 
 ```dotenv

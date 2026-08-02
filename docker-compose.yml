@@ -47,6 +47,12 @@ services:
       # The first start populates an empty code path from the image seed.
       - ${MOODLE_CODE_PATH:-./moodle}:/var/www/moodle
       - ${MOODLEDATA_PATH:-./moodledata}:/moodledata
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.moodle-cron.schedule: "@every 1m"
+      ofelia.job-exec.moodle-cron.command: "php /var/www/moodle/admin/cli/cron.php"
+      ofelia.job-exec.moodle-cron.user: "www-data"
+      ofelia.job-exec.moodle-cron.no-overlap: "true"
     # No host ports when behind Nginx Proxy Manager.
     # Uncomment only for direct debugging:
     # ports:
@@ -110,10 +116,9 @@ services:
     restart: unless-stopped
     depends_on:
       - moodle
-    command: daemon --config=/etc/ofelia/config.ini
+    command: daemon --docker
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./config/ofelia.ini:/etc/ofelia/config.ini:ro
     networks:
       - internal
     security_opt:
