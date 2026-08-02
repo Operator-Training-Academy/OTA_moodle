@@ -20,8 +20,8 @@ chmod 770 "${DATA_DIR}" || true
 # ---------------------------------------------------------------------------
 # Seed an empty persistent code mount from the image build
 # ---------------------------------------------------------------------------
-if [ ! -f "${MOODLE_DIR}/version.php" ]; then
-    if [ ! -f "${SEED_DIR}/version.php" ]; then
+if [ ! -f "${MOODLE_DIR}/public/version.php" ]; then
+    if [ ! -f "${SEED_DIR}/public/version.php" ]; then
         echo "ERROR: Moodle source seed is missing from this image" >&2
         exit 1
     fi

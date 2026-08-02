@@ -18,7 +18,6 @@ services:
     image: ${OTA_IMAGE:-ghcr.io/operator-training-academy/ota_moodle}:${OTA_IMAGE_TAG:-latest}
     container_name: moodle_app
     restart: unless-stopped
-    env_file: ${ENV_FILE:-.env}
     environment:
       # Database (external PostgreSQL)
       DB_TYPE: pgsql
@@ -35,6 +34,7 @@ services:
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASS: ${ADMIN_PASS}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      MOODLE_PASSWORD_SALT_MAIN: ${MOODLE_PASSWORD_SALT_MAIN}
       # Cache / sessions (internal Valkey)
       REDIS_HOST: cache
       REDIS_PORT: 6379
