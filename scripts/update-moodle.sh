@@ -47,10 +47,11 @@ list_refs() {
 
 choose_ref() {
     load_refs
-    local options=("${BRANCHES[@]}" "${TAGS[@]}" "Enter a branch or tag manually" "Quit")
+    local options=("${TAGS[@]}" "${BRANCHES[@]}" "Enter a branch or tag manually" "Quit")
     local choice
 
-    echo "Select the Moodle version to install on the persistent code mount."
+    echo "Select the Moodle release to install on the persistent code mount."
+    echo "Production sites should prefer a specific v* release tag."
     echo "The container image will not be pulled or rebuilt."
     PS3="Version number: "
     select choice in "${options[@]}"; do
@@ -83,37 +84,79 @@ if [ -f "${code_dir}/config.php" ]; then
     cp -a "${code_dir}/config.php" "${preserve_dir}/config.php"
 fi
 
-if [ -d "${code_dir}/.git" ]; then
-    git -C "${code_dir}" remote get-url origin >/dev/null 2>&1 \
-        || git -C "${code_dir}" remote add origin "${remote}"
-    git -C "${code_dir}" fetch --tags --force origin
+    update_git_checkout() {
+        if ! git -C "${code_dir}" diff --quiet || ! git -C "${code_dir}" diff --cached --quiet; then
+            echo "ERROR: Moodle core has tracked local modifications." >&2
+            echo "       Commit, stash, or revert them before updating." >&2
+            git -C "${code_dir}" status --short >&2
+            exit 1
+        fi
 
-    if git -C "${code_dir}" rev-parse --verify "refs/tags/${target}" >/dev/null 2>&1; then
-        git -C "${code_dir}" checkout --force "tags/${target}"
-    elif git -C "${code_dir}" rev-parse --verify "origin/${target}" >/dev/null 2>&1; then
-        git -C "${code_dir}" checkout --force -B "${target}" "origin/${target}"
+        git -C "${code_dir}" fetch --tags origin
+        if ! git -C "${code_dir}" show-ref --verify --quiet "refs/tags/${target}"; then
+            git -C "${code_dir}" fetch origin "refs/heads/${target}:refs/remotes/origin/${target}" || {
+                echo "ERROR: Moodle ref '${target}' was not found" >&2
+                exit 1
+            }
+        fi
+
+        if git -C "${code_dir}" show-ref --verify --quiet "refs/tags/${target}"; then
+            git -C "${code_dir}" checkout "${target}"
+        elif git -C "${code_dir}" show-ref --verify --quiet "refs/remotes/origin/${target}"; then
+            if git -C "${code_dir}" show-ref --verify --quiet "refs/heads/${target}"; then
+                git -C "${code_dir}" checkout "${target}"
+            else
+                git -C "${code_dir}" checkout --track -b "${target}" "origin/${target}"
+            fi
+            git -C "${code_dir}" rebase "origin/${target}"
+        else
+            echo "ERROR: Moodle ref '${target}' was not found" >&2
+            exit 1
+        fi
+    }
+
+    if git -C "${code_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        git -C "${code_dir}" remote get-url origin >/dev/null 2>&1 \
+            || git -C "${code_dir}" remote add origin "${remote}"
+        update_git_checkout
     else
-        echo "ERROR: Moodle ref '${target}' was not found" >&2
-        exit 1
+        echo "==> Adopting the existing Moodle code as a Git checkout"
+        git -C "${code_dir}" init
+        git -C "${code_dir}" remote add origin "${remote}"
+        git -C "${code_dir}" fetch --tags origin
+
+        if git -C "${code_dir}" show-ref --verify --quiet "refs/tags/${target}"; then
+            git -C "${code_dir}" reset --hard "${target}"
+        else
+            git -C "${code_dir}" fetch origin "refs/heads/${target}:refs/remotes/origin/${target}" || {
+                echo "ERROR: Moodle ref '${target}' was not found" >&2
+                exit 1
+            }
+        fi
+
+        if git -C "${code_dir}" show-ref --verify --quiet "refs/remotes/origin/${target}"; then
+            git -C "${code_dir}" reset --hard "origin/${target}"
+            git -C "${code_dir}" checkout -B "${target}" "origin/${target}"
+        elif ! git -C "${code_dir}" show-ref --verify --quiet "refs/tags/${target}"; then
+            echo "ERROR: Moodle ref '${target}' was not found" >&2
+            exit 1
+        fi
     fi
-    git -C "${code_dir}" clean -fdx
-else
-    temp_dir="$(mktemp -d)"
-    trap 'rm -rf "${preserve_dir}" "${temp_dir}"' EXIT
-    git clone --depth 1 --branch "${target}" "${remote}" "${temp_dir}/moodle"
-    shopt -s dotglob nullglob
-    rm -rf "${code_dir}"/*
-    cp -a "${temp_dir}/moodle"/. "${code_dir}/"
-    shopt -u dotglob nullglob
-fi
 
 if [ -f "${preserve_dir}/config.php" ]; then
     cp -a "${preserve_dir}/config.php" "${code_dir}/config.php"
 fi
 
-chown -R www-data:www-data "${code_dir}"
-su -s /bin/bash www-data -c "cd '${code_dir}' && COMPOSER_CACHE_DIR=/tmp/composer-cache composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress"
-chmod 440 "${code_dir}/config.php" 2>/dev/null || true
+    chown -R www-data:www-data "${code_dir}"
+    su -s /bin/bash www-data -c "cd '${code_dir}' && COMPOSER_CACHE_DIR=/tmp/composer-cache composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress"
+    chmod 440 "${code_dir}/config.php" 2>/dev/null || true
+
+    mapfile -t plugin_repositories < <(find "${code_dir}" -type d -name .git ! -path "${code_dir}/.git" -printf '%h\n')
+    if ((${#plugin_repositories[@]})); then
+        echo "==> Plugin/theme Git repositories were preserved and not updated:"
+        printf '    %s\n' "${plugin_repositories[@]}"
+        echo "    Update each repository separately after checking Moodle-version compatibility."
+    fi
 EOF
 }
 

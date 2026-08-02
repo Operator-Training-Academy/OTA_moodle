@@ -111,7 +111,9 @@ The image tag controls the PHP/Apache base. It does not select Moodle's running 
 ./scripts/update-moodle.sh
 ```
 
-The menu lists stable branches and recent release tags directly from `moodle/moodle`. The selected ref is checked out to `MOODLE_CODE_PATH`; the script runs `composer install --no-dev --optimize-autoloader`, restarts Moodle, runs the database upgrade, and purges caches.
+The menu lists stable branches and recent release tags directly from `moodle/moodle`. Production sites should select a specific `v*` release tag rather than tracking a stable branch. The updater follows Moodle's Git administrator workflow: it fetches and checks out the selected tag, or rebases the selected stable branch. It does not delete untracked files, so custom plugins and themes remain in place.
+
+The updater refuses to overwrite tracked Moodle core modifications. It reports nested Git repositories for plugins and themes without updating them; review each plugin's Moodle-version compatibility and update it separately. Existing ZIP/TGZ installations are adopted as a Git checkout without removing untracked plugins, but the selected release must match the installed version before performing a minor update.
 
 To select a known ref without the menu:
 
