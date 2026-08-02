@@ -97,6 +97,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - SETGID
+      - SETUID
     read_only: true
     tmpfs:
       - /tmp:mode=1777,size=64m
@@ -107,7 +110,7 @@ services:
     restart: unless-stopped
     depends_on:
       - moodle
-    command: daemon --docker
+    command: daemon --config=/etc/ofelia/config.ini
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./config/ofelia.ini:/etc/ofelia/config.ini:ro

@@ -37,10 +37,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     $PHPIZE_DEPS \
     libzip-dev libpng-dev libjpeg62-turbo-dev libfreetype6-dev \
     libicu-dev libxml2-dev libldap2-dev libpq-dev \
-    libonig-dev libcurl4-openssl-dev libssl-dev \
+    libonig-dev libcurl4-openssl-dev libssl-dev libxslt1-dev \
     # Runtime libs kept
     libzip4 libpng16-16 libjpeg62-turbo libfreetype6 \
-    libicu72 libxml2 libldap-2.5-0 libpq5 \
+    libicu72 libxml2 libldap-2.5-0 libpq5 libxslt1.1 \
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen \
     && locale-gen \
     && rm -rf /var/lib/apt/lists/*
@@ -56,7 +56,7 @@ COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j"$(nproc)" \
     gd intl zip soap mysqli pgsql pdo_mysql pdo_pgsql opcache \
-    ldap exif mbstring curl xml \
+    ldap exif mbstring curl xml xsl \
     && pecl install redis \
     && docker-php-ext-enable redis \
     && apt-get purge -y --auto-remove $PHPIZE_DEPS \
