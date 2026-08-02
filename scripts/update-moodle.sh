@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Select a Moodle ref, update the persistent code mount, then run the upgrade.
-# Usage: ./scripts/update-moodle.sh [MOODLE_BRANCH_OR_TAG]
+# Update Moodle code in a running Docker container.
+# Usage: moodle-update [MOODLE_BRANCH_OR_TAG]
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${REPO_ROOT}"
-
 MOODLE_REMOTE="${MOODLE_REMOTE:-https://github.com/moodle/moodle.git}"
+MOODLE_CONTAINER="${MOODLE_CONTAINER:-moodle_app}"
 MAX_TAGS=30
+MAINTENANCE_ENABLED=false
 
 die() {
     echo "ERROR: $*" >&2
@@ -16,18 +15,26 @@ die() {
 
 need_docker() {
     command -v docker >/dev/null 2>&1 || die "docker is required"
-    docker compose exec -T moodle true >/dev/null 2>&1 \
-        || die "the moodle service must be running before an update"
+    docker inspect --format '{{.State.Running}}' "${MOODLE_CONTAINER}" 2>/dev/null | grep -qx true \
+        || die "the ${MOODLE_CONTAINER} container must be running before an update"
 }
+
+leave_in_maintenance() {
+    if [ "${MAINTENANCE_ENABLED}" = true ]; then
+        echo "ERROR: Update failed; Moodle remains in maintenance mode." >&2
+    fi
+}
+
+trap leave_in_maintenance EXIT
 
 load_refs() {
     mapfile -t BRANCHES < <(
-        docker compose exec -T moodle git ls-remote --heads "${MOODLE_REMOTE}" 'MOODLE_*_STABLE' \
+        docker exec "${MOODLE_CONTAINER}" git ls-remote --heads "${MOODLE_REMOTE}" 'MOODLE_*_STABLE' \
             | while IFS=$'\t' read -r _ ref; do printf '%s\n' "${ref#refs/heads/}"; done \
             | sort -r
     )
     mapfile -t TAGS < <(
-        docker compose exec -T moodle git ls-remote --tags --refs "${MOODLE_REMOTE}" 'v*' \
+        docker exec "${MOODLE_CONTAINER}" git ls-remote --tags --refs "${MOODLE_REMOTE}" 'v*' \
             | while IFS=$'\t' read -r _ ref; do printf '%s\n' "${ref#refs/tags/}"; done \
             | sort -Vr
     )
@@ -71,7 +78,7 @@ choose_ref() {
 update_code() {
     local target="$1"
 
-    docker compose exec -T -u root moodle bash -s -- "${MOODLE_REMOTE}" "${target}" <<'EOF'
+    docker exec -i -u root "${MOODLE_CONTAINER}" bash -s -- "${MOODLE_REMOTE}" "${target}" <<'EOF'
 set -euo pipefail
 
 remote="$1"
@@ -162,19 +169,19 @@ EOF
 
 run_upgrade() {
     echo "==> Restarting Moodle to load the selected source"
-    docker compose restart moodle
+    docker restart "${MOODLE_CONTAINER}" >/dev/null
 
     local attempts=0
-    until docker compose exec -T moodle true >/dev/null 2>&1; do
+    until docker exec "${MOODLE_CONTAINER}" true >/dev/null 2>&1; do
         attempts=$((attempts + 1))
         [ "${attempts}" -lt 30 ] || die "moodle did not become ready after restart"
         sleep 2
     done
 
     echo "==> Running Moodle database upgrade"
-    docker compose exec -T moodle php admin/cli/upgrade.php --non-interactive
+    docker exec -u www-data "${MOODLE_CONTAINER}" php /var/www/moodle/admin/cli/upgrade.php --non-interactive
     echo "==> Purging Moodle caches"
-    docker compose exec -T moodle php admin/cli/purge_caches.php
+    docker exec -u www-data "${MOODLE_CONTAINER}" php /var/www/moodle/admin/cli/purge_caches.php
 }
 
 need_docker
@@ -195,7 +202,14 @@ case "${confirm}" in
     *) echo "Aborted."; exit 0 ;;
 esac
 
+echo "==> Enabling Moodle maintenance mode"
+docker exec -u www-data "${MOODLE_CONTAINER}" php /var/www/moodle/admin/cli/maintenance.php --enable
+MAINTENANCE_ENABLED=true
+
 echo "==> Updating Moodle source and Composer dependencies"
 update_code "${TARGET}"
 run_upgrade
+echo "==> Disabling Moodle maintenance mode"
+docker exec -u www-data "${MOODLE_CONTAINER}" php /var/www/moodle/admin/cli/maintenance.php --disable
+MAINTENANCE_ENABLED=false
 echo "==> Moodle update complete: ${TARGET}"

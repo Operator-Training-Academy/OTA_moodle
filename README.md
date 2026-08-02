@@ -105,11 +105,23 @@ The host directories themselves do not move: `./moodle` is now mounted at `/var/
 
 ## Update Moodle
 
-The image tag controls the PHP/Apache base. It does not select Moodle's running version. To update Moodle, first back up PostgreSQL and both persistent directories, then run:
+The image tag controls the PHP/Apache base. It does not select Moodle's running version. To update Moodle, first back up PostgreSQL and both persistent directories. Install the standalone host updater outside the writable Moodle mounts:
 
 ```bash
-./scripts/update-moodle.sh
+sudo install -o root -g root -m 0750 scripts/update-moodle.sh /usr/local/sbin/moodle-update
+sudo moodle-update --list
 ```
+
+Alternatively, download only the script from a reviewed, pinned repository commit:
+
+```bash
+UPDATE_SCRIPT_REV=<reviewed-commit-sha>
+curl -fsSLo /tmp/moodle-update "https://raw.githubusercontent.com/Operator-Training-Academy/OTA_moodle/${UPDATE_SCRIPT_REV}/scripts/update-moodle.sh"
+sudo install -o root -g root -m 0750 /tmp/moodle-update /usr/local/sbin/moodle-update
+rm /tmp/moodle-update
+```
+
+Run `moodle-update` from the Docker host, not inside `moodle_app`. It targets the `moodle_app` container by default; set `MOODLE_CONTAINER` if your deployment uses a different container name. The host requires Bash and Docker CLI access, while Git and Composer run inside Moodle's container. The updater enables maintenance mode before changing code and leaves it enabled if an update fails.
 
 The menu lists stable branches and recent release tags directly from `moodle/moodle`. Production sites should select a specific `v*` release tag rather than tracking a stable branch. The updater follows Moodle's Git administrator workflow: it fetches and checks out the selected tag, or rebases the selected stable branch. It does not delete untracked files, so custom plugins and themes remain in place.
 
@@ -118,14 +130,14 @@ The updater refuses to overwrite tracked Moodle core modifications. It reports n
 To select a known ref without the menu:
 
 ```bash
-./scripts/update-moodle.sh MOODLE_502_STABLE
-./scripts/update-moodle.sh v5.2.1
+sudo moodle-update MOODLE_502_STABLE
+sudo moodle-update v5.2.1
 ```
 
 List the available menu entries without updating:
 
 ```bash
-./scripts/update-moodle.sh --list
+sudo moodle-update --list
 ```
 
 The updater does not pull or rebuild the GHCR image. To update the base image after it is published, set `OTA_IMAGE_TAG` to the desired infrastructure image version and run `docker compose pull && docker compose up -d`.
