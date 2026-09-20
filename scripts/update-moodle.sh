@@ -75,20 +75,103 @@ choose_ref() {
     done
 }
 
+preflight_update() {
+    local target="$1"
+
+    docker exec -i -u root "${MOODLE_CONTAINER}" bash -s -- "${target}" <<'EOF'
+set -euo pipefail
+
+target="$1"
+code_dir=/var/www/moodle
+
+# Trust only this known bind mount for this controlled update process.
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=safe.directory
+export GIT_CONFIG_VALUE_0="${code_dir}"
+
+git -C "${code_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || { echo "ERROR: ${code_dir} is not a Git checkout; first-time adoption is not supported by this updater." >&2; exit 1; }
+git -C "${code_dir}" remote get-url origin >/dev/null 2>&1 \
+    || { echo "ERROR: ${code_dir} has no Git origin remote." >&2; exit 1; }
+
+if ! git -C "${code_dir}" diff --quiet || ! git -C "${code_dir}" diff --cached --quiet; then
+    echo "ERROR: Moodle core has tracked local modifications." >&2
+    git -C "${code_dir}" status --short >&2
+    exit 1
+fi
+
+mapfile -t untracked < <(
+    git -C "${code_dir}" status --porcelain --untracked-files=normal \
+        | while IFS= read -r entry; do printf '%s\n' "${entry:3}"; done
+)
+
+if ((${#untracked[@]})); then
+    unexpected=()
+    for path in "${untracked[@]}"; do
+        case "${path}" in
+            public/.htaccess|public/admin/tool/*|public/auth/*|public/availability/condition/*|public/blocks/*|public/course/format/*|public/customfield/field/*|public/enrol/*|public/filter/*|public/local/*|public/mod/*|public/plagiarism/*|public/question/behaviour/*|public/question/format/*|public/question/type/*|public/report/*|public/repository/*|public/sms/gateway/*|public/theme/*|public/user/profile/field/*)
+                ;;
+            *) unexpected+=("${path}") ;;
+        esac
+    done
+
+    echo "==> Untracked plugin/theme paths that will be preserved:"
+    printf '    %s\n' "${untracked[@]}"
+    if ((${#unexpected[@]})); then
+        echo "ERROR: Untracked paths outside approved plugin/theme locations require review:" >&2
+        printf '    %s\n' "${unexpected[@]}" >&2
+        exit 1
+    fi
+fi
+
+git -C "${code_dir}" fetch --quiet --tags origin
+if git -C "${code_dir}" show-ref --verify --quiet "refs/tags/${target}"; then
+    target_ref="refs/tags/${target}"
+else
+    git -C "${code_dir}" fetch --quiet origin "refs/heads/${target}:refs/remotes/origin/${target}" || {
+        echo "ERROR: Moodle ref '${target}' was not found" >&2
+        exit 1
+    }
+    target_ref="refs/remotes/origin/${target}"
+fi
+
+target_version="$(git -C "${code_dir}" show "${target_ref}:public/version.php" | php -r '
+$source = stream_get_contents(STDIN);
+if (!preg_match('/^\$version\s*=\s*([0-9.]+)/m', $source, $matches)) {
+    exit(1);
+}
+echo $matches[1];
+')" || { echo "ERROR: Unable to determine the selected Moodle version." >&2; exit 1; }
+current_version="$(su -s /bin/bash www-data -c "php -r 'define(\"CLI_SCRIPT\", true); require \"${code_dir}/config.php\"; echo \$CFG->version;'")"
+
+if php -r 'exit(version_compare($argv[1], $argv[2], "<") ? 0 : 1);' "${target_version}" "${current_version}"; then
+    echo "ERROR: Refusing downgrade from database version ${current_version} to ${target_version}." >&2
+    exit 1
+fi
+
+echo "==> Preflight passed: database version ${current_version}; selected source version ${target_version}"
+EOF
+}
+
 update_code() {
     local target="$1"
 
-    docker exec -i -u root "${MOODLE_CONTAINER}" bash -s -- "${MOODLE_REMOTE}" "${target}" <<'EOF'
+    docker exec -i -u root "${MOODLE_CONTAINER}" bash -s -- "${target}" <<'EOF'
 set -euo pipefail
 
-remote="$1"
-target="$2"
+target="$1"
 code_dir=/var/www/moodle
 preserve_dir="$(mktemp -d)"
 trap 'rm -rf "${preserve_dir}"' EXIT
 
+# Trust only this known bind mount for this controlled update process.
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=safe.directory
+export GIT_CONFIG_VALUE_0="${code_dir}"
+
 if [ -f "${code_dir}/config.php" ]; then
-    cp -a "${code_dir}/config.php" "${preserve_dir}/config.php"
+    # The hardened container lacks CAP_FOWNER, so do not preserve metadata.
+    cp "${code_dir}/config.php" "${preserve_dir}/config.php"
 fi
 
     update_git_checkout() {
@@ -122,41 +205,25 @@ fi
         fi
     }
 
-    if git -C "${code_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        git -C "${code_dir}" remote get-url origin >/dev/null 2>&1 \
-            || git -C "${code_dir}" remote add origin "${remote}"
-        update_git_checkout
-    else
-        echo "==> Adopting the existing Moodle code as a Git checkout"
-        git -C "${code_dir}" init
-        git -C "${code_dir}" remote add origin "${remote}"
-        git -C "${code_dir}" fetch --tags origin
-
-        if git -C "${code_dir}" show-ref --verify --quiet "refs/tags/${target}"; then
-            git -C "${code_dir}" reset --hard "${target}"
-        else
-            git -C "${code_dir}" fetch origin "refs/heads/${target}:refs/remotes/origin/${target}" || {
-                echo "ERROR: Moodle ref '${target}' was not found" >&2
-                exit 1
-            }
-        fi
-
-        if git -C "${code_dir}" show-ref --verify --quiet "refs/remotes/origin/${target}"; then
-            git -C "${code_dir}" reset --hard "origin/${target}"
-            git -C "${code_dir}" checkout -B "${target}" "origin/${target}"
-        elif ! git -C "${code_dir}" show-ref --verify --quiet "refs/tags/${target}"; then
-            echo "ERROR: Moodle ref '${target}' was not found" >&2
-            exit 1
-        fi
-    fi
+    git -C "${code_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+        || { echo "ERROR: ${code_dir} is not a Git checkout." >&2; exit 1; }
+    update_git_checkout
 
 if [ -f "${preserve_dir}/config.php" ]; then
-    cp -a "${preserve_dir}/config.php" "${code_dir}/config.php"
+    cp "${preserve_dir}/config.php" "${code_dir}/config.php"
 fi
 
-    chown -R www-data:www-data "${code_dir}"
-    su -s /bin/bash www-data -c "cd '${code_dir}' && COMPOSER_CACHE_DIR=/tmp/composer-cache composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress"
-    chmod 440 "${code_dir}/config.php" 2>/dev/null || true
+    COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_CACHE_DIR=/tmp/composer-cache \
+        composer --working-dir="${code_dir}" install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
+
+    # Core code must not be writable by Apache; Moodle writes only to moodledata.
+    chown -R root:root "${code_dir}"
+    find "${code_dir}" -type d -exec chmod 755 {} +
+    find "${code_dir}" -type f -exec chmod 644 {} +
+    if [ -f "${code_dir}/config.php" ]; then
+        chown root:www-data "${code_dir}/config.php"
+        chmod 440 "${code_dir}/config.php"
+    fi
 
     mapfile -t plugin_repositories < <(find "${code_dir}" -type d -name .git ! -path "${code_dir}/.git" -printf '%h\n')
     if ((${#plugin_repositories[@]})); then
@@ -202,6 +269,8 @@ case "${confirm}" in
     *) echo "Aborted."; exit 0 ;;
 esac
 
+echo "==> Running update preflight"
+preflight_update "${TARGET}"
 echo "==> Enabling Moodle maintenance mode"
 docker exec -u www-data "${MOODLE_CONTAINER}" php /var/www/moodle/admin/cli/maintenance.php --enable
 MAINTENANCE_ENABLED=true

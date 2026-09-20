@@ -125,7 +125,7 @@ Run `moodle-update` from the Docker host, not inside `moodle_app`. It targets th
 
 The menu lists stable branches and recent release tags directly from `moodle/moodle`. Production sites should select a specific `v*` release tag rather than tracking a stable branch. The updater follows Moodle's Git administrator workflow: it fetches and checks out the selected tag, or rebases the selected stable branch. It does not delete untracked files, so custom plugins and themes remain in place.
 
-The updater refuses to overwrite tracked Moodle core modifications. It reports nested Git repositories for plugins and themes without updating them; review each plugin's Moodle-version compatibility and update it separately. Existing ZIP/TGZ installations are adopted as a Git checkout without removing untracked plugins, but the selected release must match the installed version before performing a minor update.
+The updater requires the persistent Moodle code directory to already be a Git checkout with an `origin` remote. It refuses to overwrite tracked Moodle core modifications or to downgrade the installed database version. It reports untracked plugins and themes that it will preserve, but refuses untracked paths outside approved plugin/theme locations so they can be reviewed first. It also reports nested Git repositories for plugins and themes without updating them; review each plugin's Moodle-version compatibility and update it separately.
 
 To select a known ref without the menu:
 
