@@ -137,7 +137,7 @@ fi
 
 target_version="$(git -C "${code_dir}" show "${target_ref}:public/version.php" | php -r '
 $source = stream_get_contents(STDIN);
-if (!preg_match('/^\$version\s*=\s*([0-9.]+)/m', $source, $matches)) {
+if (!preg_match("/^\\$version\\s*=\\s*([0-9.]+)/m", $source, $matches)) {
     exit(1);
 }
 echo $matches[1];
