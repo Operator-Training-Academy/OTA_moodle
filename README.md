@@ -129,6 +129,18 @@ docker compose logs -f moodle
 
 Point Nginx Proxy Manager at `moodle_app:80` on the shared proxy network. No host port is published by default.
 
+### Image Processing
+
+The image includes ImageMagick and PHP's `imagick` extension for plugins such as
+Offline Quiz. After Portainer pulls a newly published image and redeploys the
+stack, verify both interfaces from the Docker host:
+
+```bash
+docker exec --user www-data moodle_app php -m | grep -x imagick
+docker exec --user www-data moodle_app php --ri imagick
+docker exec moodle_app convert -version
+```
+
 ### Existing Deployment Migration
 
 If upgrading an existing deployment that used `/var/moodledata`, stop the stack and update the persisted Moodle `config.php` before starting this version:
