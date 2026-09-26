@@ -163,6 +163,14 @@ target="$1"
 code_dir=/var/www/moodle
 preserve_dir="$(mktemp -d)"
 trap 'rm -rf "${preserve_dir}"' EXIT
+deploy_gid="${MOODLE_DEPLOY_GID:-0}"
+
+case "${deploy_gid}" in
+    ''|*[!0-9]*)
+        echo "ERROR: MOODLE_DEPLOY_GID must be a numeric GID" >&2
+        exit 1
+        ;;
+esac
 
 # Trust only this known bind mount for this controlled update process.
 export GIT_CONFIG_COUNT=1
@@ -216,10 +224,10 @@ fi
     COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_CACHE_DIR=/tmp/composer-cache \
         composer --working-dir="${code_dir}" install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
 
-    # Core code must not be writable by Apache; Moodle writes only to moodledata.
-    chown -R root:root "${code_dir}"
-    find "${code_dir}" -type d -exec chmod 755 {} +
-    find "${code_dir}" -type f -exec chmod 644 {} +
+    # Only the trusted host deployment group can modify core code.
+    chown -R root:"${deploy_gid}" "${code_dir}"
+    find "${code_dir}" -type d -exec chmod 2775 {} +
+    find "${code_dir}" -type f -exec chmod 664 {} +
     if [ -f "${code_dir}/config.php" ]; then
         chown root:www-data "${code_dir}/config.php"
         chmod 440 "${code_dir}/config.php"

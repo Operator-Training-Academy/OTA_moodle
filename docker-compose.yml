@@ -43,6 +43,8 @@ services:
       REVERSE_PROXY: ${REVERSE_PROXY:-true}
       SSL_PROXY: ${SSL_PROXY:-true}
       TZ: ${TZ:-UTC}
+      # Numeric host GID permitted to deploy Moodle code; www-data is not a member.
+      MOODLE_DEPLOY_GID: ${MOODLE_DEPLOY_GID:-0}
     volumes:
       # The first start populates an empty code path from the image seed.
       - ${MOODLE_CODE_PATH:-./moodle}:/var/www/moodle

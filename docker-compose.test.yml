@@ -1,0 +1,77 @@
+name: ota-moodle-test
+
+services:
+  database:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: moodle_test
+      POSTGRES_USER: moodle_test
+      POSTGRES_PASSWORD: moodle_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moodle_test -d moodle_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - test-database:/var/lib/postgresql/data
+
+  cache:
+    image: valkey/valkey:8-alpine
+    command: valkey-server --save "" --appendonly no
+
+  plugin:
+    image: alpine:3.21
+    environment:
+      TEST_PLUGIN_TARGET: ${TEST_PLUGIN_TARGET:?Set TEST_PLUGIN_TARGET in .test.env}
+    command: >
+      sh -c 'mkdir -p "/moodle/$${TEST_PLUGIN_TARGET}" &&
+      cp -a /plugin-source/. "/moodle/$${TEST_PLUGIN_TARGET}/"'
+    volumes:
+      - test-moodle-code:/moodle
+      - ${TEST_PLUGIN_PATH:?Set TEST_PLUGIN_PATH in .test.env}:/plugin-source:ro,z
+
+  moodle:
+    image: ${OTA_IMAGE:-ota-moodle:test}
+    container_name: ota-moodle-test
+    depends_on:
+      database:
+        condition: service_healthy
+      plugin:
+        condition: service_completed_successfully
+    environment:
+      DB_TYPE: pgsql
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: moodle_test
+      DB_USER: moodle_test
+      DB_PASSWORD: moodle_test
+      DB_PREFIX: mdl_
+      WWWROOT: ${WWWROOT:-http://localhost:8082}
+      SITE_FULLNAME: ${SITE_FULLNAME:-OTA Moodle Test}
+      SITE_SHORTNAME: ${SITE_SHORTNAME:-OTA Test}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASS: ${ADMIN_PASS:-Admin123!Test}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.test}
+      MOODLE_PASSWORD_SALT_MAIN: ${MOODLE_PASSWORD_SALT_MAIN:?Set MOODLE_PASSWORD_SALT_MAIN in .test.env}
+      REDIS_HOST: cache
+      REDIS_PORT: 6379
+      REDIS_PREFIX: ota_moodle_test_
+      REVERSE_PROXY: "false"
+      SSL_PROXY: "false"
+    ports:
+      - "8082:80"
+    volumes:
+      - test-moodle-code:/var/www/moodle
+      - test-moodledata:/moodledata
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate --url http://host.docker.internal:8082
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+volumes:
+  test-database:
+  test-moodle-code:
+  test-moodledata:
